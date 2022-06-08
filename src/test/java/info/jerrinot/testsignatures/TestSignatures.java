@@ -3,6 +3,7 @@ package info.jerrinot.testsignatures;
 import io.questdb.cutlass.line.tcp.AuthDb;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
+import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -33,22 +34,34 @@ public class TestSignatures {
     private static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
 
 
-    @Test
-    public void testSignature() throws Exception {
-        HttpRequest request = HttpRequest.newBuilder()
+    private HttpRequest request;
+    private JSONParser parser;
+    private byte[] challengeBytes;
+    private Signature sigDER;
+    private Signature sigP1363;
+    private HttpClient client;
+    private static final SecureRandom srand = new SecureRandom();
+
+    @Before
+    public void setUp() throws Exception {
+        request = HttpRequest.newBuilder()
                 .uri(new URI("http://" + keyGen.getHost() + ":" + keyGen.getMappedPort(5000) + "/"))
                 .GET()
                 .build();
 
-        HttpClient client = HttpClient.newBuilder().build();
-        JSONParser parser = new JSONParser();
+        client = HttpClient.newBuilder().build();
+        parser = new JSONParser();
 
-        byte[] challengeBytes = new byte[CHALLENGE_LEN];
-        SecureRandom srand = new SecureRandom();
+        challengeBytes = new byte[CHALLENGE_LEN];
 
-        Signature sigDER = Signature.getInstance(SIGNATURE_TYPE_DER);
-        Signature sigP1363 = Signature.getInstance(SIGNATURE_TYPE_P1363);
+        sigDER = Signature.getInstance(SIGNATURE_TYPE_DER);
+        sigP1363 = Signature.getInstance(SIGNATURE_TYPE_P1363);
+    }
 
+
+
+    @Test
+    public void testSignature() throws Exception {
         for (int i = 0; i < 1_000; i++) {
             HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
             JSONObject jsonObject = (JSONObject) parser.parse(resp.body());
@@ -57,27 +70,32 @@ public class TestSignatures {
             String x = (String) jsonObject.get("x");
             String y = (String) jsonObject.get("y");
 
-            int n = 0;
-            while (n < CHALLENGE_LEN) {
-                int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
-                challengeBytes[n] = (byte) r;
-                n++;
+            for (int l = 0; l < 100; l++) {
+                refreshChallenge(challengeBytes);
+
+                PrivateKey privateKey = AuthDb.importPrivateKey(d);
+                PublicKey publicKey = AuthDb.importPublicKey(x, y);
+
+                byte[] signature = signAndEncode(privateKey, challengeBytes);
+
+                Signature sig = signature.length == 64 ? sigP1363 : sigDER;
+                sig.initVerify(publicKey);
+                sig.update(challengeBytes);
+                boolean verify = sig.verify(signature);
+
+                if (!verify) {
+                    fail("Failure wit keys no. " + i +" challange iteraiton no. " + l);
+                }
             }
+        }
+    }
 
-            PrivateKey privateKey = AuthDb.importPrivateKey(d);
-            PublicKey publicKey = AuthDb.importPublicKey(x, y);
-
-            byte[] signature = signAndEncode(privateKey, challengeBytes);
-            byte[] signatureRaw = Base64.getDecoder().decode(signature);
-
-            Signature sig = signatureRaw.length == 64 ? sigP1363 : sigDER;
-            sig.initVerify(publicKey);
-            sig.update(challengeBytes);
-            boolean verify = sig.verify(signatureRaw);
-
-            if (!verify) {
-                fail("Failure at iteration no. " + i);
-            }
+    private static void refreshChallenge(byte[] challengeBytes) {
+        int n = 0;
+        while (n < CHALLENGE_LEN) {
+            int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
+            challengeBytes[n] = (byte) r;
+            n++;
         }
     }
 
@@ -91,6 +109,6 @@ public class TestSignatures {
         } catch (InvalidKeyException | SignatureException | NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
-        return Base64.getEncoder().encode(rawSignature);
+        return rawSignature;
     }
 }
