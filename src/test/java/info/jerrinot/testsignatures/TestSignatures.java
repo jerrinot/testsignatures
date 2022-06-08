@@ -62,6 +62,10 @@ public class TestSignatures {
 
     @Test
     public void testSignature() throws Exception {
+        String prevD = "";
+        String prevX = "";
+        String prevY = "";
+
         for (int i = 0; i < 1_000; i++) {
             HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
             JSONObject jsonObject = (JSONObject) parser.parse(resp.body());
@@ -70,7 +74,9 @@ public class TestSignatures {
             String x = (String) jsonObject.get("x");
             String y = (String) jsonObject.get("y");
 
-            for (int l = 0; l < 100; l++) {
+
+
+            for (int l = 0; l < 2; l++) {
                 refreshChallenge(challengeBytes);
 
                 PrivateKey privateKey = AuthDb.importPrivateKey(d);
@@ -84,8 +90,14 @@ public class TestSignatures {
                 boolean verify = sig.verify(signature);
 
                 if (!verify) {
-                    fail("Failure wit keys no. " + i +" challange iteraiton no. " + l);
+                    System.out.println("Current X = " + x + "("+x.length()+"), Previous X = " + prevX + "("+prevX.length()+")");
+                    System.out.println("Current Y = " + y + "("+y.length()+"), Previous X = " + prevY + "("+prevY.length()+")");
+                    System.out.println("Current D = " + d + "("+d.length()+"), Previous X = " + prevD + "("+prevD.length()+")");
+                    fail("Failure wit keys no. " + i +" challenge iteraiton no. " + l);
                 }
+                prevX = x;
+                prevY = y;
+                prevD = d;
             }
         }
     }
