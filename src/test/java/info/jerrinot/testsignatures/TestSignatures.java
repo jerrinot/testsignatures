@@ -12,7 +12,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -20,8 +23,11 @@ import java.security.SecureRandom;
 import java.security.Signature;
 import java.security.SignatureException;
 
-import java.util.Base64;
+import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.ECGenParameterSpec;
 
+import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
+import static io.questdb.cutlass.line.tcp.AuthDb.EC_CURVE;
 import static org.junit.Assert.fail;
 
 public class TestSignatures {
@@ -66,39 +72,56 @@ public class TestSignatures {
         String prevX = "";
         String prevY = "";
 
-        for (int i = 0; i < 1_000; i++) {
-            HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
-            JSONObject jsonObject = (JSONObject) parser.parse(resp.body());
-
-            String d = (String) jsonObject.get("d");
-            String x = (String) jsonObject.get("x");
-            String y = (String) jsonObject.get("y");
-
-
+        for (int i = 0; i < 100_000; i++) {
+//            KeyPair keys = keysFromPython();
+            KeyPair keys = keysFromJava();
 
             for (int l = 0; l < 2; l++) {
                 refreshChallenge(challengeBytes);
 
-                PrivateKey privateKey = AuthDb.importPrivateKey(d);
-                PublicKey publicKey = AuthDb.importPublicKey(x, y);
 
-                byte[] signature = signAndEncode(privateKey, challengeBytes);
+                byte[] signature = signAndEncode(keys.getPrivate(), challengeBytes);
 
                 Signature sig = signature.length == 64 ? sigP1363 : sigDER;
-                sig.initVerify(publicKey);
+                sig.initVerify(keys.getPublic());
                 sig.update(challengeBytes);
                 boolean verify = sig.verify(signature);
 
                 if (!verify) {
-                    System.out.println("Current X = " + x + "("+x.length()+"), Previous X = " + prevX + "("+prevX.length()+")");
-                    System.out.println("Current Y = " + y + "("+y.length()+"), Previous X = " + prevY + "("+prevY.length()+")");
-                    System.out.println("Current D = " + d + "("+d.length()+"), Previous X = " + prevD + "("+prevD.length()+")");
+//                    System.out.println("Current X = " + x + "("+x.length()+"), Previous X = " + prevX + "("+prevX.length()+")");
+//                    System.out.println("Current Y = " + y + "("+y.length()+"), Previous X = " + prevY + "("+prevY.length()+")");
+//                    System.out.println("Current D = " + d + "("+d.length()+"), Previous X = " + prevD + "("+prevD.length()+")");
                     fail("Failure wit keys no. " + i +" challenge iteraiton no. " + l);
                 }
-                prevX = x;
-                prevY = y;
-                prevD = d;
+//                prevX = x;
+//                prevY = y;
+//                prevD = d;
             }
+        }
+    }
+
+    private KeyPair keysFromPython() throws Exception {
+        HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+        JSONObject jsonObject = (JSONObject) parser.parse(resp.body());
+
+        String d = (String) jsonObject.get("d");
+        String x = (String) jsonObject.get("x");
+        String y = (String) jsonObject.get("y");
+
+        PrivateKey privateKey = AuthDb.importPrivateKey(d);
+        PublicKey publicKey = AuthDb.importPublicKey(x, y);
+
+        return new KeyPair(publicKey, privateKey);
+    }
+
+    private static KeyPair keysFromJava() {
+        try {
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(EC_ALGORITHM);
+            AlgorithmParameterSpec prime256v1ParamSpec = new ECGenParameterSpec(EC_CURVE);
+            keyPairGenerator.initialize(prime256v1ParamSpec);
+            return keyPairGenerator.generateKeyPair();
+        } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException  ex) {
+            throw new IllegalArgumentException("Failed to generate a key ", ex);
         }
     }
 
